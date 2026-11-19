@@ -200,3 +200,8 @@ chip::AppPlatform::ContentAppFactoryImpl * GetContentAppFactoryImpl();
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 
 CHIP_ERROR AppTvInit(void);
+
+#if CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE
+CHIP_ERROR SetExampleFixedPasscodeCommissioningPasscode(uint32_t passcode);
+CHIP_ERROR SetExampleFixedPasscodeCommissioningEnabled(bool enabled);
+#endif

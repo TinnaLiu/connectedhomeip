@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2023 Project CHIP Authors
+ *   Copyright (c) 2023-2026 Project CHIP Authors
  *   All rights reserved.
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.TextView;
 import androidx.annotation.Nullable;
@@ -45,6 +47,8 @@ public class DiscoveryExampleFragment extends Fragment {
   private static final Long DISCOVERY_TARGET_DEVICE_TYPE = 35L;
   private static final int DISCOVERY_RUNTIME_SEC = 15;
   private TextView matterDiscoveryMessageTextView;
+  private CheckBox useFixedPasscodeCommissioningCheckBox;
+  private EditText fixedPasscodeCommissioningPasscodeEditText;
   public static TextView matterDiscoveryErrorMessageTextView;
   private static final List<CastingPlayer> castingPlayerList = new ArrayList<>();
   private static ArrayAdapter<CastingPlayer> arrayAdapter;
@@ -165,7 +169,16 @@ public class DiscoveryExampleFragment extends Fragment {
     matterDiscoveryErrorMessageTextView.setText(
         getString(R.string.matter_discovery_error_message_initial));
 
-    arrayAdapter = new CastingPlayerArrayAdapter(getActivity(), castingPlayerList);
+    useFixedPasscodeCommissioningCheckBox =
+        getActivity().findViewById(R.id.useFixedPasscodeCommissioningCheckBox);
+    fixedPasscodeCommissioningPasscodeEditText =
+        getActivity().findViewById(R.id.fixedPasscodeCommissioningPasscodeEditText);
+    arrayAdapter =
+        new CastingPlayerArrayAdapter(
+            getActivity(),
+            castingPlayerList,
+            useFixedPasscodeCommissioningCheckBox,
+            fixedPasscodeCommissioningPasscodeEditText);
     final ListView list = getActivity().findViewById(R.id.castingPlayerList);
     list.setAdapter(arrayAdapter);
 
@@ -226,7 +239,9 @@ public class DiscoveryExampleFragment extends Fragment {
   public interface Callback {
     /** Notifies listener of Connection Button click. */
     void handleConnectionButtonClicked(
-        CastingPlayer castingPlayer, boolean useCommissionerGeneratedPasscode);
+        CastingPlayer castingPlayer,
+        boolean useCommissionerGeneratedPasscode,
+        Long fixedPasscodeCommissioningPasscode);
   }
 
   private boolean startDiscovery() {
@@ -306,14 +321,23 @@ public class DiscoveryExampleFragment extends Fragment {
 class CastingPlayerArrayAdapter extends ArrayAdapter<CastingPlayer> {
   private final List<CastingPlayer> playerList;
   private final Context context;
+  private final CheckBox useFixedPasscodeCommissioningCheckBox;
+  private final EditText fixedPasscodeCommissioningPasscodeEditText;
   private LayoutInflater inflater;
   private static final String TAG = CastingPlayerArrayAdapter.class.getSimpleName();
 
-  public CastingPlayerArrayAdapter(Context context, List<CastingPlayer> playerList) {
+  public CastingPlayerArrayAdapter(
+      Context context,
+      List<CastingPlayer> playerList,
+      CheckBox useFixedPasscodeCommissioningCheckBox,
+      EditText fixedPasscodeCommissioningPasscodeEditText) {
     super(context, 0, playerList);
     Log.i(TAG, "CastingPlayerArrayAdapter() constructor called");
     this.context = context;
     this.playerList = playerList;
+    this.useFixedPasscodeCommissioningCheckBox = useFixedPasscodeCommissioningCheckBox;
+    this.fixedPasscodeCommissioningPasscodeEditText =
+        fixedPasscodeCommissioningPasscodeEditText;
     inflater = (LayoutInflater.from(context));
   }
 
@@ -335,7 +359,21 @@ class CastingPlayerArrayAdapter extends ArrayAdapter<CastingPlayer> {
                   + castingPlayer.getDeviceId());
           DiscoveryExampleFragment.Callback onClickCallback =
               (DiscoveryExampleFragment.Callback) context;
-          onClickCallback.handleConnectionButtonClicked(castingPlayer, false);
+          Long fixedPasscodeCommissioningPasscode = null;
+          if (useFixedPasscodeCommissioningCheckBox.isChecked()) {
+            try {
+              fixedPasscodeCommissioningPasscode =
+                  Long.parseLong(
+                      fixedPasscodeCommissioningPasscodeEditText.getText().toString());
+            } catch (NumberFormatException exception) {
+              Log.e(TAG, "Fixed Passcode is not a valid integer", exception);
+              DiscoveryExampleFragment.matterDiscoveryErrorMessageTextView.setText(
+                  "Enter a valid Fixed Passcode before selecting a Casting Player");
+              return;
+            }
+          }
+          onClickCallback.handleConnectionButtonClicked(
+              castingPlayer, false, fixedPasscodeCommissioningPasscode);
         };
     playerDescription.setOnClickListener(clickListener);
 
@@ -362,7 +400,7 @@ class CastingPlayerArrayAdapter extends ArrayAdapter<CastingPlayer> {
                   + ", attempting the Commissioner-Generated passcode commissioning flow.");
           DiscoveryExampleFragment.Callback onClickCallback =
               (DiscoveryExampleFragment.Callback) context;
-          onClickCallback.handleConnectionButtonClicked(castingPlayer, true);
+          onClickCallback.handleConnectionButtonClicked(castingPlayer, true, null);
           return true;
         };
     playerDescription.setOnLongClickListener(longClickListener);

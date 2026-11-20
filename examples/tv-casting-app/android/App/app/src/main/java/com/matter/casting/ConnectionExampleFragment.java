@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2024 Project CHIP Authors
+ *   Copyright (c) 2024-2026 Project CHIP Authors
  *   All rights reserved.
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import com.chip.casting.R;
+import com.matter.casting.core.CastingApp;
 import com.matter.casting.core.CastingPlayer;
 import com.matter.casting.support.CommissionerDeclaration;
 import com.matter.casting.support.ConnectionCallbacks;
@@ -38,6 +39,8 @@ import com.matter.casting.support.IdentificationDeclarationOptions;
 import com.matter.casting.support.MatterCallback;
 import com.matter.casting.support.MatterError;
 import com.matter.casting.support.TargetAppInfo;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 
 /** A {@link Fragment} to Verify or establish a connection with a selected Casting Player. */
@@ -49,23 +52,47 @@ public class ConnectionExampleFragment extends Fragment {
   private static final Integer DESIRED_TARGET_APP_VENDOR_ID = 65521;
   private static final long DEFAULT_COMMISSIONER_GENERATED_PASSCODE = 12345678;
   private static final int DEFAULT_DISCRIMINATOR_FOR_CGP_FLOW = 0;
+  private static final long CHIP_ERROR_INVALID_PASE_PARAMETER = 0x38;
+  private static final Map<String, Long> rejectedFixedPasscodes = new HashMap<>();
   private final CastingPlayer targetCastingPlayer;
   private final boolean useCommissionerGeneratedPasscode;
+  private final boolean supportsFixedPasscodeCommissioning;
+  private final Long rememberedFixedPasscode;
+  private boolean fixedPasscodeCommissioningSelected;
+  private boolean fixedPasscodeCommissioningDataConfigured;
+  private final long originalSetupPasscode;
+  private final int originalDiscriminator;
   private TextView connectionFragmentStatusTextView;
   private TextView commissionerDeclarationErrorTextView;
   private Button connectionFragmentNextButton;
   private AlertDialog passcodeDialog;
 
   public ConnectionExampleFragment(
-      CastingPlayer targetCastingPlayer, boolean useCommissionerGeneratedPasscode) {
+      CastingPlayer targetCastingPlayer,
+      boolean useCommissionerGeneratedPasscode,
+      Long fixedPasscodeCommissioningPasscode) {
     Log.i(
         TAG,
         "ConnectionExampleFragment() Target CastingPlayer ID: "
             + targetCastingPlayer.getDeviceId()
             + ", useCommissionerGeneratedPasscode: "
-            + useCommissionerGeneratedPasscode);
+            + useCommissionerGeneratedPasscode
+            + ", supportsFixedPasscodeCommissioning: "
+            + (fixedPasscodeCommissioningPasscode != null));
     this.targetCastingPlayer = targetCastingPlayer;
     this.useCommissionerGeneratedPasscode = useCommissionerGeneratedPasscode;
+    Long rejectedFixedPasscode = rejectedFixedPasscodes.get(targetCastingPlayer.getDeviceId());
+    this.rememberedFixedPasscode =
+        useCommissionerGeneratedPasscode
+                || fixedPasscodeCommissioningPasscode == null
+                || fixedPasscodeCommissioningPasscode.equals(rejectedFixedPasscode)
+            ? null
+            : fixedPasscodeCommissioningPasscode;
+    this.supportsFixedPasscodeCommissioning = rememberedFixedPasscode != null;
+    this.originalSetupPasscode =
+        InitializationExample.commissionableDataProvider.get().getSetupPasscode();
+    this.originalDiscriminator =
+        InitializationExample.commissionableDataProvider.get().getDiscriminator();
   }
 
   /**
@@ -75,9 +102,12 @@ public class ConnectionExampleFragment extends Fragment {
    * @return A new instance of fragment ConnectionExampleFragment.
    */
   public static ConnectionExampleFragment newInstance(
-      CastingPlayer castingPlayer, Boolean useCommissionerGeneratedPasscode) {
+      CastingPlayer castingPlayer,
+      Boolean useCommissionerGeneratedPasscode,
+      Long fixedPasscodeCommissioningPasscode) {
     Log.i(TAG, "newInstance()");
-    return new ConnectionExampleFragment(castingPlayer, useCommissionerGeneratedPasscode);
+    return new ConnectionExampleFragment(
+        castingPlayer, useCommissionerGeneratedPasscode, fixedPasscodeCommissioningPasscode);
   }
 
   @Override
@@ -107,6 +137,14 @@ public class ConnectionExampleFragment extends Fragment {
           "Verifying or establishing connection with Casting Player with device name: "
               + targetCastingPlayer.getDeviceName()
               + "\n\nAttempting CastingPlayer/Commissioner-Generated passcode commissioning.");
+    } else if (supportsFixedPasscodeCommissioning) {
+      connectionFragmentStatusTextView.setText(
+          "Verifying or establishing a connection with Fixed Passcode Commissioning support: "
+              + targetCastingPlayer.getDeviceName()
+              + "\n\nIf Fixed Passcode Commissioning is not selected, use this setup Passcode: "
+              + InitializationExample.commissionableDataProvider.get().getSetupPasscode()
+              + "\nDiscriminator: "
+              + InitializationExample.commissionableDataProvider.get().getDiscriminator());
     } else {
       connectionFragmentStatusTextView.setText(
           "Verifying or establishing connection with Casting Player with device name: "
@@ -137,13 +175,29 @@ public class ConnectionExampleFragment extends Fragment {
                 // Set commissionerPasscode to true for CastingPlayer/Commissioner-Generated
                 // passcode commissioning.
                 idOptions =
-                    new IdentificationDeclarationOptions(false, false, true, false, false, 0);
+                    new IdentificationDeclarationOptions(
+                        false, false, true, false, false, 0, false, false);
                 Log.d(
                     TAG,
                     "onViewCreated() calling CastingPlayer.verifyOrEstablishConnection() Target Content Application Vendor ID: "
                         + targetAppInfo.getVendorId()
                         + ", useCommissionerGeneratedPasscode: "
                         + useCommissionerGeneratedPasscode);
+              } else if (supportsFixedPasscodeCommissioning) {
+                int passcodeLength =
+                    String.valueOf(
+                            Math.abs(
+                                InitializationExample.commissionableDataProvider
+                                    .get()
+                                    .getSetupPasscode()))
+                        .length();
+                idOptions =
+                    new IdentificationDeclarationOptions(
+                        false, false, false, false, false, passcodeLength, true, false);
+                Log.d(
+                    TAG,
+                    "Advertising Fixed Passcode Commissioning support to CastingPlayer "
+                        + targetCastingPlayer.getDeviceId());
               } else {
                 int passcodeLength =
                     String.valueOf(
@@ -154,7 +208,7 @@ public class ConnectionExampleFragment extends Fragment {
                         .length();
                 idOptions =
                     new IdentificationDeclarationOptions(
-                        false, false, false, false, false, passcodeLength);
+                        false, false, false, false, false, passcodeLength, false, false);
                 Log.d(
                     TAG,
                     "onViewCreated() calling CastingPlayer.verifyOrEstablishConnection() Target Content Application Vendor ID: "
@@ -168,6 +222,12 @@ public class ConnectionExampleFragment extends Fragment {
                       new MatterCallback<Void>() {
                         @Override
                         public void handle(Void v) {
+                          boolean usedFixedPasscodeCommissioning =
+                              fixedPasscodeCommissioningSelected;
+                          if (usedFixedPasscodeCommissioning) {
+                            rejectedFixedPasscodes.remove(targetCastingPlayer.getDeviceId());
+                          }
+                          restoreCommissionableData();
                           Log.i(
                               TAG,
                               "Successfully connected to CastingPlayer with deviceId: "
@@ -182,6 +242,8 @@ public class ConnectionExampleFragment extends Fragment {
                                             + targetCastingPlayer.getDeviceName()
                                             + "\n\nUsed CastingPlayer Passcode: "
                                             + useCommissionerGeneratedPasscode
+                                            + "\nUsed Fixed Passcode Commissioning: "
+                                            + usedFixedPasscodeCommissioning
                                             + "\n\n");
                                     connectionFragmentNextButton.setEnabled(true);
                                   });
@@ -190,7 +252,12 @@ public class ConnectionExampleFragment extends Fragment {
                       new MatterCallback<MatterError>() {
                         @Override
                         public void handle(MatterError err) {
+                          restoreCommissionableData();
                           Log.e(TAG, "CastingPlayer connection failed: " + err);
+                          if (fixedPasscodeCommissioningSelected
+                              && err.getErrorCode() == CHIP_ERROR_INVALID_PASE_PARAMETER) {
+                            return;
+                          }
                           getActivity()
                               .runOnUiThread(
                                   () -> {
@@ -216,6 +283,56 @@ public class ConnectionExampleFragment extends Fragment {
                       cd.logDetail();
 
                       FragmentActivity activity = getActivity();
+                      boolean fixedPasscodeAuthenticationFailed =
+                          cd.getErrorCode() == CommissionerDeclaration.CdError.paseAuthFailed
+                              && fixedPasscodeCommissioningSelected;
+                      if (fixedPasscodeAuthenticationFailed) {
+                        rejectedFixedPasscodes.put(
+                            targetCastingPlayer.getDeviceId(), rememberedFixedPasscode);
+                        fixedPasscodeCommissioningSelected = false;
+                        restoreCommissionableData();
+                        Log.e(
+                            TAG,
+                            "The stored fixed setup Passcode does not match this CastingPlayer. "
+                                + "Update the stored Passcode or use another Passcode flow.");
+                      }
+                      if (cd.getCancelPasscode()) {
+                        fixedPasscodeCommissioningSelected = false;
+                        restoreCommissionableData();
+                      }
+                      if (cd.getFixedPasscodeCommissioningSelected()
+                          && supportsFixedPasscodeCommissioning
+                          && !fixedPasscodeCommissioningSelected) {
+                        int discriminator =
+                            InitializationExample.commissionableDataProvider
+                                .get()
+                                .getDiscriminator();
+                        InitializationExample.commissionableDataProvider
+                            .updateCommissionableDataSetupPasscode(
+                                rememberedFixedPasscode, discriminator);
+                        fixedPasscodeCommissioningSelected = true;
+                        fixedPasscodeCommissioningDataConfigured = true;
+                        MatterError updateError =
+                            CastingApp.getInstance().updateCommissionableDataProvider();
+                        if (updateError.hasError()) {
+                          Log.e(
+                              TAG,
+                              "Failed to configure Fixed Passcode Commissioning: " + updateError);
+                          targetCastingPlayer.stopConnecting();
+                          restoreCommissionableData();
+                          return;
+                        }
+                        MatterError continueError = targetCastingPlayer.continueConnecting();
+                        if (continueError.hasError()) {
+                          Log.e(
+                              TAG,
+                              "Failed to continue Fixed Passcode Commissioning: "
+                                  + continueError);
+                          targetCastingPlayer.stopConnecting();
+                          restoreCommissionableData();
+                          return;
+                        }
+                      }
                       // Prevent possible NullPointerException. This callback could be called when
                       // this fragment is not attached to its host activity or when the fragment's
                       // lifecycle is not in a valid state for interacting with the activity.
@@ -246,9 +363,16 @@ public class ConnectionExampleFragment extends Fragment {
                                 }
                               }
                               if (cd.getErrorCode() != CommissionerDeclaration.CdError.noError) {
-                                commissionerDeclarationErrorTextView.setText(
-                                    "CommissionerDeclaration error from CastingPlayer: "
-                                        + cd.getErrorCode().getDescription());
+                                if (fixedPasscodeAuthenticationFailed) {
+                                  commissionerDeclarationErrorTextView.setText(
+                                      "The stored fixed setup Passcode does not match this Casting "
+                                          + "Player. Update the stored Passcode or use another "
+                                          + "Passcode flow.");
+                                } else {
+                                  commissionerDeclarationErrorTextView.setText(
+                                      "CommissionerDeclaration error from CastingPlayer: "
+                                          + cd.getErrorCode().getDescription());
+                                }
                               }
                             });
                       }
@@ -260,6 +384,7 @@ public class ConnectionExampleFragment extends Fragment {
                       connectionCallbacks, MIN_CONNECTION_TIMEOUT_SEC, idOptions);
 
               if (err.hasError()) {
+                restoreCommissionableData();
                 getActivity()
                     .runOnUiThread(
                         () -> {
@@ -283,6 +408,22 @@ public class ConnectionExampleFragment extends Fragment {
             "Going back before connection finishes but stopConnecting() failed due to: " + err);
       }
     }
+    restoreCommissionableData();
+  }
+
+  private void restoreCommissionableData() {
+    if (!fixedPasscodeCommissioningDataConfigured) {
+      return;
+    }
+
+    InitializationExample.commissionableDataProvider.updateCommissionableDataSetupPasscode(
+        originalSetupPasscode, originalDiscriminator);
+    MatterError updateError = CastingApp.getInstance().updateCommissionableDataProvider();
+    if (updateError.hasError()) {
+      Log.e(TAG, "Failed to restore CommissionableData after Fixed Passcode Commissioning");
+      return;
+    }
+    fixedPasscodeCommissioningDataConfigured = false;
   }
 
   private void displayPasscodeInputDialog(Context context) {

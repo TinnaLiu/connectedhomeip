@@ -1,6 +1,6 @@
 /**
  *
- *    Copyright (c) 2023 Project CHIP Authors
+ *    Copyright (c) 2023-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -29,6 +29,10 @@ struct MCDiscoveryExampleView: View {
     // Enable navigating to the MCConnectionExampleView with or without the use
     // Commissioner-Generated Passcode (CGP) flag.
     @State private var navigateWithUseCGP = false
+    @State private var useFixedPasscodeCommissioning = false
+    @State private var fixedPasscode = "1234"
+    @State private var selectedFixedPasscode: UInt32?
+    @State private var fixedPasscodeError: String?
     
     var body: some View {
         VStack(alignment: .center, spacing: 16) {
@@ -53,6 +57,24 @@ struct MCDiscoveryExampleView: View {
                 .foregroundColor(Color.white)
                 .padding(1)
 
+            Toggle("Use Fixed Passcode Commissioning", isOn: $useFixedPasscodeCommissioning)
+                .frame(width: 350)
+
+            HStack {
+                Text("Fixed passcode:")
+                TextField("", text: $fixedPasscode)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!useFixedPasscodeCommissioning)
+            }
+            .frame(width: 350)
+
+            if let fixedPasscodeError = fixedPasscodeError {
+                Text(fixedPasscodeError)
+                    .foregroundColor(.red)
+                    .font(.system(size: 12))
+            }
+
             if(viewModel.discoveryHasError)
             {
                 Text("Discovery request failed. Check logs for details")
@@ -65,7 +87,8 @@ struct MCDiscoveryExampleView: View {
                         NavigationLink(
                             destination: MCConnectionExampleView(
                                 _selectedCastingPlayer: selectedCastingPlayer,
-                                _useCommissionerGeneratedPasscode: navigateWithUseCGP
+                                _useCommissionerGeneratedPasscode: navigateWithUseCGP,
+                                _fixedPasscodeCommissioningPasscode: selectedFixedPasscode
                             ),
                             isActive: Binding(
                                 get: { selectedCastingPlayer?.id == castingPlayer.id },
@@ -76,6 +99,7 @@ struct MCDiscoveryExampleView: View {
                                     } else {
                                         selectedCastingPlayer = nil
                                         navigateWithUseCGP = false
+                                        selectedFixedPasscode = nil
                                     }
                                 }
                             ),
@@ -89,6 +113,16 @@ struct MCDiscoveryExampleView: View {
                             .foregroundColor(Color.white)
                             .border(Color.black, width: 1)
                             .onTapGesture {
+                                if useFixedPasscodeCommissioning {
+                                    guard let parsedPasscode = UInt32(fixedPasscode) else {
+                                        fixedPasscodeError = "Enter a valid Fixed Passcode before selecting a Casting Player"
+                                        return
+                                    }
+                                    selectedFixedPasscode = parsedPasscode
+                                } else {
+                                    selectedFixedPasscode = nil
+                                }
+                                fixedPasscodeError = nil
                                 selectedCastingPlayer = castingPlayer
                                 navigateWithUseCGP = false
                             }
@@ -97,6 +131,7 @@ struct MCDiscoveryExampleView: View {
                                     .onEnded { _ in
                                         selectedCastingPlayer = castingPlayer
                                         navigateWithUseCGP = true
+                                        selectedFixedPasscode = nil
                                     }
                             )
                     }

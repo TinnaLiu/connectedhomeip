@@ -1,6 +1,6 @@
 /**
  *
- *    Copyright (c) 2023 Project CHIP Authors
+ *    Copyright (c) 2023-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -75,6 +75,7 @@ CHIP_ERROR ConfigValueProviderCallback(const char * configNamespace, const char 
 @property (atomic) dispatch_queue_t workQueue;
 
 // Client defiend data source used to initialize the MCCommissionableDataProvider and, if needed, update the MCCommissionableDataProvider post initialization. This is necessary for the Commissioner-Generated passcode commissioning feature.
+// This is also necessary for Fixed Passcode Commissioning.
 @property (nonatomic, strong) id<MCDataSource> dataSource;
 
 @end

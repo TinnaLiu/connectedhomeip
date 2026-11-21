@@ -1,6 +1,6 @@
 /**
  *
- *    Copyright (c) 2020-2023 Project CHIP Authors
+ *    Copyright (c) 2020-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -20,19 +20,45 @@ import os.log
 import UIKit
 
 class MCConnectionExampleViewModel: ObservableObject {
+    // Prevents retrying a passcode that already failed for the same Casting Player.
+    private static var rejectedFixedPasscodes: [String: UInt32] = [:]
+
     let Log = Logger(subsystem: "com.matter.casting",
                      category: "MCConnectionExampleViewModel")
 
     var passcodeAlertController: UIAlertController?
-    
+
     // VendorId of the MCEndpoint on the MCCastingPlayer that the MCCastingApp desires to interact with after connection
     let kDesiredEndpointVendorId: UInt16 = 65521;
-    
+    private let invalidPaseParameterErrorCode = 0x38
+
+    private var fixedPasscodeCommissioningSelected = false
+    private var fixedPasscodeCommissioningDataConfigured = false
+    private var fixedPasscodeAuthenticationFailed = false
+    private var rememberedFixedPasscode: UInt32?
+    private var originalCommissionableData: MCCommissionableData?
+    private var targetCastingPlayerIdentifier: String?
+
     @Published var connectionSuccess: Bool?;
 
     @Published var connectionStatus: String?;
 
     @Published var errorCodeDescription: String?
+
+    @Published var showFixedPasscodeAuthenticationFailure = false
+
+    static func canRequestFixedPasscodeCommissioning(
+        selectedCastingPlayer: MCCastingPlayer?,
+        fixedPasscodeCommissioningPasscode: UInt32?
+    ) -> Bool {
+        guard let selectedCastingPlayer = selectedCastingPlayer,
+              let fixedPasscodeCommissioningPasscode = fixedPasscodeCommissioningPasscode else {
+            return false
+        }
+
+        return rejectedFixedPasscodes[selectedCastingPlayer.identifier()]
+            != fixedPasscodeCommissioningPasscode
+    }
 
     func cancelConnectionAttempt(selectedCastingPlayer: MCCastingPlayer?) {
         DispatchQueue.main.async {
@@ -54,25 +80,66 @@ class MCConnectionExampleViewModel: ObservableObject {
                     self.Log.error("MCConnectionExampleViewModel cancelConnect() MCCastingPlayer.stopConnecting() failed due to: \(err)")
                 }
             }
+            self.fixedPasscodeCommissioningSelected = false
+            self.restoreCommissionableData()
         }
     }
 
-    func connect(selectedCastingPlayer: MCCastingPlayer?, useCommissionerGeneratedPasscode: Bool) {
+    func connect(
+        selectedCastingPlayer: MCCastingPlayer?,
+        useCommissionerGeneratedPasscode: Bool,
+        fixedPasscodeCommissioningPasscode: UInt32?
+    ) {
         self.Log.info("MCConnectionExampleViewModel.connect() useCommissionerGeneratedPasscode: \(String(describing: useCommissionerGeneratedPasscode))")
+
+        guard let selectedCastingPlayer = selectedCastingPlayer else {
+            self.connectionSuccess = false
+            self.connectionStatus = "No Casting Player was selected."
+            return
+        }
+
+        let targetIdentifier = selectedCastingPlayer.identifier()
+        targetCastingPlayerIdentifier = targetIdentifier
+        fixedPasscodeAuthenticationFailed = false
+        let canRequestFixedPasscodeCommissioning =
+            !useCommissionerGeneratedPasscode
+                && MCConnectionExampleViewModel.canRequestFixedPasscodeCommissioning(
+                    selectedCastingPlayer: selectedCastingPlayer,
+                    fixedPasscodeCommissioningPasscode: fixedPasscodeCommissioningPasscode
+                )
+        rememberedFixedPasscode =
+            canRequestFixedPasscodeCommissioning ? fixedPasscodeCommissioningPasscode : nil
+        let supportsFixedPasscodeCommissioning = rememberedFixedPasscode != nil
+
+        if let dataSource = MCInitializationExample.shared.getAppParametersDataSource() {
+            originalCommissionableData = dataSource.getCommissionableData()
+        }
 
         let connectionCompleteCallback: (Swift.Error?) -> Void = { err in
             self.Log.error("MCConnectionExampleViewModel connect() completed with: \(err)")
             DispatchQueue.main.async {
+                let usedFixedPasscodeCommissioning = self.fixedPasscodeCommissioningSelected
+                self.restoreCommissionableData()
+
+                if self.fixedPasscodeAuthenticationFailed {
+                    return
+                }
+
                 if err == nil {
-                    self.connectionSuccess = true
-                    if useCommissionerGeneratedPasscode {
-                        self.connectionStatus = "Successfully connected to Casting Player using the Casting Player/Commissioner-Generated passcode!"
-                        self.Log.info("MCConnectionExampleViewModel connect() Successfully connected to Casting Player using the Casting Player/CommissioneR-Generated passcode!")
-                    } else {
-                        self.connectionStatus = "Successfully connected to Casting Player!"
-                        self.Log.info("MCConnectionExampleViewModel connect() Successfully connected to Casting Player using the Casting App/CommissioneE-Generated passcode!")
+                    if usedFixedPasscodeCommissioning, let identifier = self.targetCastingPlayerIdentifier {
+                        MCConnectionExampleViewModel.rejectedFixedPasscodes.removeValue(forKey: identifier)
                     }
+                    self.fixedPasscodeCommissioningSelected = false
+                    self.connectionSuccess = true
+                    self.connectionStatus =
+                        "Successfully connected to Casting Player with device name: \(selectedCastingPlayer.deviceName())\n\nUsed CastingPlayer Passcode: \(useCommissionerGeneratedPasscode)\nUsed Fixed Passcode Commissioning: \(usedFixedPasscodeCommissioning)\n\n"
+                    self.Log.info("MCConnectionExampleViewModel connect() Successfully connected to Casting Player")
+                } else if usedFixedPasscodeCommissioning
+                    && (err as NSError?)?.code == self.invalidPaseParameterErrorCode {
+                    // The CommissionerDeclaration with paseAuthFailed identifies this as a fixed-passcode mismatch.
+                    return
                 } else {
+                    self.fixedPasscodeCommissioningSelected = false
                     self.connectionSuccess = false
                     self.connectionStatus = "Connection to Casting Player failed with: \(String(describing: err))"
                 }
@@ -82,6 +149,26 @@ class MCConnectionExampleViewModel: ObservableObject {
         let commissionerDeclarationCallback: (MCCommissionerDeclaration) -> Void = { commissionerDeclarationMessage in
             DispatchQueue.main.async {
                 self.Log.info("MCConnectionExampleViewModel connect() commissionerDeclarationCallback, recived a message form the MCCastingPlayer:\n\(commissionerDeclarationMessage)")
+
+                let fixedPasscodeAuthenticationFailed =
+                    commissionerDeclarationMessage.errorCode == CdError.paseAuthFailed
+                        && self.fixedPasscodeCommissioningSelected
+                if fixedPasscodeAuthenticationFailed {
+                    if let identifier = self.targetCastingPlayerIdentifier,
+                       let passcode = self.rememberedFixedPasscode {
+                        MCConnectionExampleViewModel.rejectedFixedPasscodes[identifier] = passcode
+                    }
+                    self.fixedPasscodeCommissioningSelected = false
+                    self.fixedPasscodeAuthenticationFailed = true
+                    self.restoreCommissionableData()
+                    self.connectionSuccess = false
+                    self.connectionStatus =
+                        "The stored fixed setup Passcode does not match this Casting Player. Update the Fixed Passcode or use another Passcode flow."
+                    self.errorCodeDescription = self.connectionStatus
+                    self.showFixedPasscodeAuthenticationFailure = true
+                    self.Log.error("MCConnectionExampleViewModel connect() Fixed Passcode Commissioning authentication failed")
+                    return
+                }
 
                 // Display CommissionerDeclaration error code if `errorCode` is not `kNoError`
                 if commissionerDeclarationMessage.errorCode != CdError.noError {
@@ -93,7 +180,28 @@ class MCConnectionExampleViewModel: ObservableObject {
                 if commissionerDeclarationMessage.cancelPasscode {
                     self.Log.info("MCConnectionExampleViewModel connect() commissionerDeclarationCallback. Cancel passcode received. Dismissing the PasscodeInputDialog.")
                     self.passcodeAlertController?.dismiss(animated: true, completion: nil)
-                    self.connectionStatus = "Connection attempt cancelled by the CastingPlayer/Commissioner user. \n\nRoute back to exit."
+                    self.fixedPasscodeCommissioningSelected = false
+                    self.restoreCommissionableData()
+                    if useCommissionerGeneratedPasscode {
+                        self.connectionStatus =
+                            "CastingPlayer/Commissioner-Generated passcode connection attempt cancelled by the CastingPlayer/Commissioner user. \n\nRoute back to exit. \n\n"
+                    } else {
+                        self.connectionStatus =
+                            "Connection attempt cancelled by the CastingPlayer/Commissioner user. \n\nRoute back to exit. \n\n"
+                    }
+                    return
+                }
+
+                if commissionerDeclarationMessage.fixedPasscodeCommissioningSelected {
+                    guard supportsFixedPasscodeCommissioning,
+                          let fixedPasscode = self.rememberedFixedPasscode else {
+                        self.Log.error("MCConnectionExampleViewModel connect() Ignoring Fixed Passcode Commissioning selection without a remembered passcode")
+                        return
+                    }
+                    self.continueFixedPasscodeCommissioning(
+                        selectedCastingPlayer: selectedCastingPlayer,
+                        fixedPasscode: fixedPasscode
+                    )
                     return
                 }
 
@@ -157,6 +265,18 @@ class MCConnectionExampleViewModel: ObservableObject {
                 callbacks: connectionCompleteCallback,
                 commissionerDeclarationCallback: commissionerDeclarationCallback
             )
+        } else if supportsFixedPasscodeCommissioning {
+            let passcodeLength =
+                originalCommissionableData.map { String($0.passcode).count } ?? 0
+            identificationDeclarationOptions =
+                MCIdentificationDeclarationOptions(
+                    passcodeLength: passcodeLength,
+                    fixedPasscodeCommissioningSupported: true
+                )
+            connectionCallbacks = MCConnectionCallbacks(
+                callbacks: connectionCompleteCallback,
+                commissionerDeclarationCallback: commissionerDeclarationCallback
+            )
         } else {
             identificationDeclarationOptions = MCIdentificationDeclarationOptions()
             connectionCallbacks = MCConnectionCallbacks(
@@ -169,10 +289,81 @@ class MCConnectionExampleViewModel: ObservableObject {
         self.Log.info("MCConnectionExampleViewModel.connect() MCIdentificationDeclarationOptions description: \n\(identificationDeclarationOptions.description)")
 
         self.Log.info("MCConnectionExampleViewModel.connect() calling MCCastingPlayer.verifyOrEstablishConnection()")
-        let err = selectedCastingPlayer?.verifyOrEstablishConnection(with: connectionCallbacks, identificationDeclarationOptions: identificationDeclarationOptions)
+        let err = selectedCastingPlayer.verifyOrEstablishConnection(with: connectionCallbacks, identificationDeclarationOptions: identificationDeclarationOptions)
         if err != nil {
+            self.restoreCommissionableData()
             self.Log.error("MCConnectionExampleViewModel connect(), MCCastingPlayer.verifyOrEstablishConnection() failed due to: \(err)")
         }
+    }
+
+    private func continueFixedPasscodeCommissioning(
+        selectedCastingPlayer: MCCastingPlayer,
+        fixedPasscode: UInt32
+    ) {
+        guard let dataSource = MCInitializationExample.shared.getAppParametersDataSource(),
+              let originalCommissionableData = originalCommissionableData else {
+            failFixedPasscodeCommissioningPreparation(
+                selectedCastingPlayer: selectedCastingPlayer,
+                reason: "Failed to access the CommissionableData provider."
+            )
+            return
+        }
+
+        let fixedCommissionableData = MCCommissionableData(
+            passcode: fixedPasscode,
+            discriminator: originalCommissionableData.discriminator,
+            spake2pIterationCount: originalCommissionableData.spake2pIterationCount,
+            spake2pVerifier: nil,
+            spake2pSalt: nil
+        )
+        dataSource.update(fixedCommissionableData)
+        fixedPasscodeCommissioningDataConfigured = true
+        fixedPasscodeCommissioningSelected = true
+
+        let continueError = selectedCastingPlayer.continueConnecting()
+        if let continueError = continueError {
+            failFixedPasscodeCommissioningPreparation(
+                selectedCastingPlayer: selectedCastingPlayer,
+                reason: "Failed to open the Fixed Passcode Commissioning window: \(continueError)"
+            )
+            return
+        }
+
+        connectionStatus = "Continuing with Fixed Passcode Commissioning."
+    }
+
+    private func failFixedPasscodeCommissioningPreparation(
+        selectedCastingPlayer: MCCastingPlayer,
+        reason: String
+    ) {
+        connectionSuccess = false
+        connectionStatus = reason
+        errorCodeDescription = reason
+        let stopError = selectedCastingPlayer.stopConnecting()
+        if let stopError = stopError {
+            Log.error("MCConnectionExampleViewModel failed to cancel Fixed Passcode Commissioning: \(stopError)")
+        }
+        fixedPasscodeCommissioningSelected = false
+        restoreCommissionableData()
+    }
+
+    private func restoreCommissionableData() {
+        guard fixedPasscodeCommissioningDataConfigured,
+              let originalCommissionableData = originalCommissionableData,
+              let dataSource = MCInitializationExample.shared.getAppParametersDataSource() else {
+            return
+        }
+
+        dataSource.update(originalCommissionableData)
+        guard let castingApp = MCCastingApp.getSharedInstance() else {
+            Log.error("MCConnectionExampleViewModel failed to access MCCastingApp while restoring CommissionableData")
+            return
+        }
+        if let updateError = castingApp.updateCommissionableDataProvider() {
+            Log.error("MCConnectionExampleViewModel failed to restore CommissionableData: \(updateError)")
+            return
+        }
+        fixedPasscodeCommissioningDataConfigured = false
     }
 
     // Function to display the passcode input dialog

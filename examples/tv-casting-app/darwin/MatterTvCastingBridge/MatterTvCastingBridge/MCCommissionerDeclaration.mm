@@ -1,6 +1,6 @@
 /**
  *
- *    Copyright (c) 2024 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@
         _qRCodeDisplayed = cppCommissionerDeclaration->GetQRCodeDisplayed();
         _cancelPasscode = cppCommissionerDeclaration->GetCancelPasscode();
         _passcodeLength = cppCommissionerDeclaration->GetPasscodeLength();
+        _fixedPasscodeCommissioningSelected = cppCommissionerDeclaration->GetFixedPasscodeCommissioningSelected();
     }
     return self;
 }
@@ -61,13 +62,14 @@
         _qRCodeDisplayed = qRCodeDisplayed;
         _cancelPasscode = cancelPasscode;
         _passcodeLength = passcodeLength;
+        _fixedPasscodeCommissioningSelected = NO;
     }
     return self;
 }
 
 - (NSString *)description
 {
-    return [NSString stringWithFormat:@"MCCommissionerDeclaration::errorCode:               %@\nMCCommissionerDeclaration::needsPasscode:           %d\nMCCommissionerDeclaration::noAppsFound:             %d\nMCCommissionerDeclaration::passcodeDialogDisplayed: %d\nMCCommissionerDeclaration::commissionerPasscode:    %d\nMCCommissionerDeclaration::qRCodeDisplayed:         %d\nMCCommissionerDeclaration::cancelPasscode:          %d\nMCCommissionerDeclaration::passcodeLength: %d",
+    return [NSString stringWithFormat:@"MCCommissionerDeclaration::errorCode:               %@\nMCCommissionerDeclaration::needsPasscode:           %d\nMCCommissionerDeclaration::noAppsFound:             %d\nMCCommissionerDeclaration::passcodeDialogDisplayed: %d\nMCCommissionerDeclaration::commissionerPasscode:    %d\nMCCommissionerDeclaration::qRCodeDisplayed:         %d\nMCCommissionerDeclaration::cancelPasscode:          %d\nMCCommissionerDeclaration::passcodeLength:          %d\nMCCommissionerDeclaration::fixedPasscodeCommissioningSelected: %d",
                      [self stringForErrorCode:self.errorCode],
                      self.needsPasscode,
                      self.noAppsFound,
@@ -75,7 +77,8 @@
                      self.commissionerPasscode,
                      self.qRCodeDisplayed,
                      self.cancelPasscode,
-                     self.passcodeLength];
+                     self.passcodeLength,
+                     self.fixedPasscodeCommissioningSelected];
 }
 
 - (NSString *)getErrorCodeString
